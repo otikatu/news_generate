@@ -1,0 +1,8 @@
+requests
+feedparser
+streamlit
+playwright
+openai
+google-generativeai
+python-pptx
+nest_asyncio
