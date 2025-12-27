@@ -8,8 +8,12 @@ from news_fetcher import NewsFetcher
 from script_generator import ScriptGenerator
 from komei_scraper import KomeiScraper
 from slide_generator import SlideGenerator
+from law_fetcher import LawFetcher
+from stats_fetcher import StatsFetcher
 from settings_manager import load_settings, save_settings
 from project_manager import save_project, list_projects, delete_project
+import re
+import json
 
 # ページ設定
 st.set_page_config(page_title="国会NEWS台本", layout="wide")
@@ -57,6 +61,17 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# ユーティリティ
+def clean_script_text(text: str) -> str:
+    """台本からJSONブロックを除去する"""
+    if not text:
+        return ""
+    # ```json ... ``` を除去
+    text = re.sub(r"```json.*?```", "", text, flags=re.DOTALL)
+    # 裸の JSON 配列っぽい部分も除去 (念のため)
+    text = re.sub(r"\[\s*\{.*\}\s*\]", "", text, flags=re.DOTALL)
+    return text.strip()
 
 # Playwrightのブラウザをクラウド環境でインストール
 @st.cache_resource
@@ -108,6 +123,7 @@ with st.sidebar:
     default_gemini_key = get_secret_or_setting("GEMINI_API_KEY", "gemini_key")
     default_komei_user = get_secret_or_setting("KOMEI_USER", "komei_user")
     default_komei_pass = get_secret_or_setting("KOMEI_PASS", "komei_pass")
+    default_estat_id = get_secret_or_setting("ESTAT_APP_ID", "estat_id")
     
     # プロバイダー選択
     provider = st.selectbox("AIプロバイダー", ["OpenAI", "Gemini"], index=0 if saved_settings.get("provider") == "OpenAI" else 1)
@@ -129,6 +145,7 @@ with st.sidebar:
     komei_user = st.text_input("KOMEI ID", placeholder="example@komei.jp", value=default_komei_user)
     komei_pass = st.text_input("Password", type="password", value=default_komei_pass)
     komei_article_url = st.text_input("公明記事URL", placeholder="https://viewer.komei-shimbun.jp/...", value=saved_settings.get("komei_article_url", ""))
+    estat_id = st.text_input("e-Stat App ID", placeholder="取得したIDを入力してください", value=default_estat_id, type="password")
 
     if st.button("💾 設定を保存"):
         # 入力された値（またはsecretsから読み込まれた値）を保存
@@ -142,7 +159,8 @@ with st.sidebar:
             "gemini_model": model if provider == "Gemini" else saved_settings.get("gemini_model", "gemini-3-pro-preview"),
             "komei_user": komei_user,
             "komei_pass": komei_pass,
-            "komei_article_url": komei_article_url
+            "komei_article_url": komei_article_url,
+            "estat_id": estat_id
         }
         save_settings(current_settings)
         st.success("設定を保存しました。")
@@ -159,8 +177,8 @@ with tab_main:
 
     with col1:
         topic = st.text_input(
-            "議題・キーワード (複数入力はカンマ区切り)", 
-            placeholder="例：防衛増税, 少子化対策",
+            "議題・キーワード（文章での入力もOK！）", 
+            placeholder="例：国保逃れについて直近の話題をまとめて",
             key="main_topic_input"
         )
         
@@ -173,13 +191,17 @@ with tab_main:
 
     # ソース選択
     st.markdown("🔍 **収集ソースの選択**")
-    col_s1, col_s2, col_s3 = st.columns(3)
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
     with col_s1:
-        use_komei = st.checkbox("公明新聞(全文取得)", value=True)
+        use_komei = st.checkbox("公明新聞", value=True)
     with col_s2:
         use_diet = st.checkbox("国会議事録", value=True)
     with col_s3:
-        use_news = st.checkbox("一般ニュース (Google & RSS)", value=True)
+        use_news = st.checkbox("一般ニュース", value=True)
+    with col_s4:
+        use_law = st.checkbox("e-Gov法令", value=True)
+    with col_s5:
+        use_stats = st.checkbox("e-Stat統計", value=True)
 
     # セッション状態の初期化
     if "current_script" not in st.session_state:
@@ -192,93 +214,164 @@ with tab_main:
         st.session_state["show_trends"] = False
     if "current_model" not in st.session_state:
         st.session_state["current_model"] = "N/A"
+    if "current_raw_script" not in st.session_state:
+        st.session_state["current_raw_script"] = ""
 
-    # 2. 台本生成ボタン (トレンド待ちを回避するために上に移動)
+    # 2. 台本生成ボタン
     if st.button("🚀 台本を生成する", type="primary"):
         if not topic:
             st.error("キーワードを入力してください。")
         elif not api_key:
             st.error(f"{provider}のAPIキーをサイドバーに入力してください。")
         else:
-            # 期間の確定（1つしか選ばれていない場合は終了日を今日にする）
-            start_date = date_range[0]
-            end_date = date_range[1] if len(date_range) == 2 else datetime.date.today()
-
-            news_list = []
-            speeches = []
-
+            # 前回の情報をクリア
+            st.session_state["current_raw_script"] = ""
+            st.session_state["current_script"] = ""
+            st.session_state["current_slides_data"] = []
+            st.session_state["current_news"] = []
+            st.session_state["current_speeches"] = []
+            
             try:
-                with st.status(f"情報を収集中 ({provider})...", expanded=True) as status:
-                    # 1. 国会議事録の取得
+                generator = ScriptGenerator(provider, api_key, model)
+                
+                with st.status(f"リクエストを解析中...", expanded=True) as status:
+                    # 自然言語解析の実行
+                    query_info = generator.analyze_query(topic)
+                    search_keywords = ", ".join(query_info["keywords"])
+                    st.write(f"🔍 検索キーワードを抽出しました: `{search_keywords}`")
+                    
+                    # 期間の確定
+                    default_start = datetime.date.today() - datetime.timedelta(days=7)
+                    user_start = date_range[0]
+                    user_end = date_range[1] if len(date_range) == 2 else datetime.date.today()
+                    
+                    if user_start != default_start:
+                        start_date = user_start
+                        end_date = user_end
+                        st.write(f"📅 ユーザー指定の期間を適用します: {start_date} 〜 {end_date}")
+                    elif query_info.get("days"):
+                        end_date = datetime.date.today()
+                        start_date = end_date - datetime.timedelta(days=query_info["days"])
+                        st.write(f"📅 文章から期間を推測しました: {start_date} 〜 {end_date} ({query_info['days']}日間)")
+                    else:
+                        start_date = user_start
+                        end_date = user_end
+
+                    news_list = []
+                    speeches = []
+
+                    # --- 1. 国会議事録の取得 ---
                     if use_diet:
-                        st.write("国会議事録を検索中...")
+                        diet_start = end_date - datetime.timedelta(days=365)
+                        st.write(f"🏛️ 国会議事録を検索中 (背景調査のため 1年前まで遡ります: {diet_start} 〜 {end_date})...")
                         diet_api = DietMinutesAPI()
                         speeches = diet_api.fetch_speeches(
-                            any_keyword=topic,
-                            from_date=start_date.strftime("%Y-%m-%d"),
+                            any_keyword=search_keywords,
+                            from_date=diet_start.strftime("%Y-%m-%d"),
                             until_date=end_date.strftime("%Y-%m-%d")
                         )
                         st.write(f"✅ 議事録: {len(speeches)}件取得")
                     else:
                         st.write("⏩ 国会議事録をスキップ")
 
-                    # 2. ニュースRSSの取得
+                    # --- 2. ニュースRSSの取得 ---
                     if use_news:
-                        st.write("主要メディアのRSSを検索中...")
+                        st.write(f"主要メディアのRSSを検索中...")
                         news_fetcher = NewsFetcher()
+                        main_kw = query_info["keywords"][0] if query_info["keywords"] else topic
                         news_list = news_fetcher.fetch_all_news(
-                            keyword=topic,
+                            keyword=main_kw,
                             days=(end_date - start_date).days
                         )
-                        st.write(f"✅ ニュース: {len(news_list)}件取得")
+                        st.write(f"✅ ニュース: {len(news_list)}件取得 (キーワード: {main_kw})")
                     else:
                         st.write("⏩ その他ニュースをスキップ")
 
-                    # 3. 公明新聞スクレイピング
+                    # --- 3. 公明新聞スクレイピング ---
                     if use_komei and komei_user and komei_pass:
                         scraper = KomeiScraper()
                         target_urls = []
-                        
                         if komei_article_url:
                             target_urls = [komei_article_url]
                         else:
                             st.write("---")
-                            st.write(f"🔍 公明新聞から「{topic}」に関連する記事を自動検索中...")
-                            target_urls = asyncio.run(scraper.search_articles(topic))
-                        
+                            k_keywords = query_info.get("keywords", [topic])
+                            st.write(f"🔍 公明新聞を検索中 (キーワード候補: {', '.join(k_keywords)})...")
+                            for kw in k_keywords:
+                                f_urls = asyncio.run(scraper.search_articles(kw))
+                                if f_urls:
+                                    target_urls.extend(f_urls)
+                                    st.write(f"✅ 公明新聞: 「{kw}」で記事が見つかりました")
+                                    break
                         if target_urls:
+                            target_urls = list(dict.fromkeys(target_urls))[:3]
                             for idx, url in enumerate(target_urls):
-                                st.write(f"📄 記事を取得中 ({idx+1}/{len(target_urls)}): {url}")
+                                st.write(f"📄 公明新聞記事の内容を抽出中 ({idx+1}/{len(target_urls)})...")
                                 komei_text = asyncio.run(scraper.fetch_article_text(komei_user, komei_pass, url))
                                 if komei_text:
                                     news_list.append({
                                         "source": "公明新聞",
-                                        "title": f"検索記事 {idx+1}",
+                                        "title": f"公明新聞 関連記事 {idx+1}",
                                         "summary": komei_text[:1000] + "...",
                                         "link": url,
                                         "published": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                                     })
-                                    st.success(f"✅ 公明新聞: 記事{idx+1}の取得に成功しました。")
+                                    st.success(f"✅ 公明新聞: 成功")
                                 else:
-                                    st.error(f"❌ 公明新聞: 記事{idx+1}の取得に失敗しました。")
+                                    st.error(f"❌ 公明新聞: 失敗")
                         elif not komei_article_url:
-                            st.info("ℹ️ 公明新聞: 関連する最新記事は見つかりませんでした。")
+                            st.info("ℹ️ 公明新聞: 関連記事なし")
                     else:
                         st.write("⏩ 公明新聞をスキップ")
 
-                    # 4. 台本生成
+                    # --- 4. 法令情報の取得 ---
+                    law_titles = []
+                    if use_law:
+                        st.write("e-Gov法令APIを検索中...")
+                        law_fetcher = LawFetcher()
+                        l_keywords = query_info.get("law_keywords", query_info["keywords"])
+                        unique_laws = []
+                        seen_ids = set()
+                        for kw in l_keywords:
+                            st.write(f"🔍 法令: 「{kw}」で検索試行中...")
+                            results = law_fetcher.search_laws(kw)
+                            if results:
+                                for r in results:
+                                    if r['id'] not in seen_ids:
+                                        unique_laws.append(r)
+                                        seen_ids.add(r['id'])
+                            if len(unique_laws) >= 5: break
+                        law_titles = [f"{r['title']} ({r['number']})" for r in unique_laws[:5]]
+                        st.write(f"✅ 法令: {len(law_titles)}件特定")
+
+                    # --- 5. 統計情報の取得 ---
+                    stats_summaries = []
+                    if use_stats:
+                        st.write("e-Stat統計APIを検索中...")
+                        stats_fetcher = StatsFetcher(app_id=estat_id)
+                        s_keywords = query_info.get("stats_keywords", query_info["keywords"])
+                        unique_stats = []
+                        seen_ids = set()
+                        for kw in s_keywords:
+                            st.write(f"📊 統計: 「{kw}」で検索試行中...")
+                            results = stats_fetcher.search_stats(kw)
+                            if results:
+                                for r in results:
+                                    if r['id'] not in seen_ids:
+                                        unique_stats.append(r)
+                                        seen_ids.add(r['id'])
+                            if len(unique_stats) >= 5: break
+                        stats_summaries = [f"{r['title']} ({r['org']})" for r in unique_stats[:5]]
+                        st.write(f"✅ 統計: {len(stats_summaries)}件特定")
+
+                    # --- 6. 台本生成 ---
                     st.write(f"AI ({model}) が台本を執筆中...")
-                    if not news_list and not speeches:
-                        st.warning(f"「{topic}」に関する最新情報が見つかりませんでした。AIは過去の知識に基づいて台本を作成します。")
-                    
                     generator = ScriptGenerator(provider=provider, api_key=api_key, model=model)
-                    generated_text = generator.generate(topic, news_list, speeches)
-                    
-                    # プレゼン資料用データを抽出
+                    generated_text = generator.generate(topic, news_list, speeches, law_titles, stats_summaries)
                     slides_data = generator.extract_json_from_response(generated_text)
                     
-                    # 全て成功した場合のみセッション状態を更新 (Atomic update)
-                    st.session_state["current_script"] = generated_text
+                    st.session_state["current_raw_script"] = generated_text
+                    st.session_state["current_script"] = clean_script_text(generated_text)
                     st.session_state["current_slides_data"] = slides_data
                     st.session_state["current_news"] = news_list
                     st.session_state["current_speeches"] = speeches
@@ -295,22 +388,63 @@ with tab_main:
     if st.session_state["current_script"]:
         st.divider()
         st.subheader(f"📝 生成された要約台本 ({st.session_state['current_model']})")
-        st.session_state["current_script"] = st.text_area(
-            "台本内容 (コピーして利用してください)", 
+        
+        # 台本の編集・閲覧
+        new_script = st.text_area(
+            "台本内容 (直接編集も可能です)", 
             value=st.session_state["current_script"], 
-            height=400
+            height=400,
+            key="display_script_area"
+        )
+        st.session_state["current_script"] = new_script
+
+        # --- 台本の再構成（Refinement） ---
+        st.markdown("🪄 **AIに再構成を依頼する**")
+        refine_instruction = st.text_input(
+            "追加の指示（例：もっと具体例を増やして、トーンを明るくして、議論を深掘りして）",
+            placeholder="ここに指示を入力してください...",
+            key="refine_input"
         )
         
-        if st.button("💾 プロジェクトを保存する"):
-            path = save_project(
-                st.session_state["current_topic"], 
-                st.session_state["current_script"], 
-                st.session_state["current_news"], 
-                st.session_state["current_speeches"], 
-                st.session_state["current_provider"], 
-                st.session_state["current_model"]
-            )
-            st.success(f"プロジェクトを保存しました: {path}")
+        if st.button("✨ 再構成を実行"):
+            if not refine_instruction:
+                st.warning("指示を入力してください。")
+            else:
+                try:
+                    with st.status("台本を再構成中...", expanded=True) as status:
+                        generator = ScriptGenerator(
+                            provider=st.session_state["current_provider"], 
+                            api_key=api_key, 
+                            model=st.session_state["current_model"]
+                        )
+                        # 最新の(編集された)台本と、生データを組み合わせて再送
+                        new_raw_text = generator.refine(
+                            st.session_state["current_raw_script"], 
+                            refine_instruction
+                        )
+                        
+                        # 更新
+                        st.session_state["current_raw_script"] = new_raw_text
+                        st.session_state["current_script"] = clean_script_text(new_raw_text)
+                        st.session_state["current_slides_data"] = generator.extract_json_from_response(new_raw_text)
+                        
+                        status.update(label="再構成完了！", state="complete")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"再構成中にエラーが発生しました: {e}")
+
+        col_save, _ = st.columns([1, 4])
+        with col_save:
+            if st.button("💾 プロジェクトを保存する"):
+                path = save_project(
+                    st.session_state["current_topic"], 
+                    st.session_state["current_raw_script"], # 保存はフルデータ
+                    st.session_state["current_news"], 
+                    st.session_state["current_speeches"], 
+                    st.session_state["current_provider"], 
+                    st.session_state["current_model"]
+                )
+                st.success(f"保存完了: {path}")
 
         # プレゼン資料ダウンロード機能
         if st.session_state.get("current_slides_data"):
@@ -329,6 +463,9 @@ with tab_main:
                     file_name=f"presentation_{datetime.date.today()}.pptx",
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 )
+            
+            with st.expander("📊 スライド構成データ (JSON) を確認"):
+                st.json(st.session_state["current_slides_data"])
 
         with st.expander("取得データ（ソース）の確認"):
             tab_n, tab_s = st.tabs(["🗞️ ニュース・記事", "🏛️ 国会議事録"])
@@ -515,6 +652,16 @@ with tab_history:
                 with col_h2:
                     if st.button("台本を表示", key=f"view_{proj['filename']}"):
                         st.session_state["view_proj"] = proj
+                        # メイン画面にも反映させる (ロード機能)
+                        st.session_state["current_topic"] = proj.get("topic", "")
+                        st.session_state["current_script"] = proj.get("script", "")
+                        st.session_state["current_raw_script"] = proj.get("raw_script", proj.get("script", ""))
+                        st.session_state["current_news"] = proj.get("news_list", [])
+                        st.session_state["current_speeches"] = proj.get("diet_speeches", [])
+                        st.session_state["current_slides_data"] = proj.get("slides_data", [])
+                        st.session_state["current_model"] = proj.get("model", "N/A")
+                        st.session_state["current_provider"] = proj.get("provider", "N/A")
+                        st.success(f"「{proj['topic']}」をロードしました。「台本作成」タブで編集できます。")
                 with col_h3:
                     if st.button("削除", key=f"del_{proj['filename']}", type="secondary"):
                         delete_project(proj['filename'])
