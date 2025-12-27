@@ -378,74 +378,72 @@ with tab_main:
             st.rerun()
     else:
         # APIキーがある場合のみタグを表示
-            with st.spinner("トレンド情報を取得中..."):
-                # プロバイダーに応じたAPIキーのチェック
-                if not api_key:
-                    st.warning(f"{provider} の API キーが設定されていません。トレンドの抽出には AI 連携が必要です。")
-                    st.info("サイドバーでキーを入力するか、Streamlit Cloud の Secrets で設定してください。")
-                    st.session_state["show_trends"] = False
-                    return
-
-                trend_data = fetch_trending_info(provider, api_key, model)
-                
-                # エラーがあれば表示
-                if "error" in trend_data:
-                    st.error(f"トレンド取得中にエラーが発生しました: {trend_data['error']}")
-                    st.info("Playwright の起動に失敗している可能性があります（クラウド環境の制限など）。")
-            
-            # 1. 一般ニュースセクション
-            with st.container(border=True):
-                st.markdown("🗞️ **一般ニュースの注目ワード**")
-                tags = trend_data["general"]["tags"]
-                if tags:
-                    tag_cols = st.columns(len(tags))
-                    for i, tag in enumerate(tags):
-                        tag_cols[i].button(
-                            f"#{tag}", 
-                            key=f"tag_gen_{tag}", 
-                            use_container_width=True,
-                            on_click=on_tag_click,
-                            args=(tag,)
-                        )
-                
-                headlines = trend_data["general"]["headlines"]
-                if headlines:
-                    for h in headlines[:3]:
-                        st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
-                    if len(headlines) > 3:
-                        with st.expander("もっと見る"):
-                            for h in headlines[3:]:
-                                st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
-
-            # 2. 公明新聞セクション
-            with st.container(border=True):
-                st.markdown("🏢 **公明新聞の注目ワード**")
-                tags = trend_data["komei"]["tags"]
-                if tags:
-                    tag_cols = st.columns(len(tags))
-                    for i, tag in enumerate(tags):
-                        tag_cols[i].button(
-                            f"#{tag}", 
-                            key=f"tag_kom_{tag}", 
-                            use_container_width=True,
-                            on_click=on_tag_click,
-                            args=(tag,)
-                        )
-                
-                headlines = trend_data["komei"]["headlines"]
-                if headlines:
-                    for h in headlines[:3]:
-                        st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
-                    if len(headlines) > 3:
-                        with st.expander("もっと見る"):
-                            for h in headlines[3:]:
-                                st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
-            
-            if st.button("トレンドを閉じる"):
+        with st.spinner("トレンド情報を取得中..."):
+            # プロバイダーに応じたAPIキーのチェック
+            if not api_key:
+                st.warning(f"{provider} の API キーが設定されていません。トレンドの抽出には AI 連携が必要です。")
+                st.info("サイドバーでキーを入力するか、Streamlit Cloud の Secrets で設定してください。")
                 st.session_state["show_trends"] = False
-                st.rerun()
-        else:
-            st.info("サイドバーでAPIキーを設定すると、今注目のキーワードが表示されます。")
+                return
+
+            trend_data = fetch_trending_info(provider, api_key, model)
+            
+            # エラーがあれば表示
+            if "error" in trend_data:
+                st.error(f"トレンド取得中にエラーが発生しました: {trend_data['error']}")
+                st.info("Playwright の起動に失敗している可能性があります（クラウド環境の制限など）。")
+        
+        # 1. 一般ニュースセクション
+        with st.container(border=True):
+            st.markdown("🗞️ **一般ニュースの注目ワード**")
+            tags = trend_data["general"]["tags"]
+            if tags:
+                tag_cols = st.columns(len(tags))
+                for i, tag in enumerate(tags):
+                    tag_cols[i].button(
+                        f"#{tag}", 
+                        key=f"tag_gen_{tag}", 
+                        use_container_width=True,
+                        on_click=on_tag_click,
+                        args=(tag,)
+                    )
+            
+            headlines = trend_data["general"]["headlines"]
+            if headlines:
+                for h in headlines[:3]:
+                    st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
+                if len(headlines) > 3:
+                    with st.expander("もっと見る"):
+                        for h in headlines[3:]:
+                            st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
+
+        # 2. 公明新聞セクション
+        with st.container(border=True):
+            st.markdown("🏢 **公明新聞の注目ワード**")
+            tags = trend_data["komei"]["tags"]
+            if tags:
+                tag_cols = st.columns(len(tags))
+                for i, tag in enumerate(tags):
+                    tag_cols[i].button(
+                        f"#{tag}", 
+                        key=f"tag_kom_{tag}", 
+                        use_container_width=True,
+                        on_click=on_tag_click,
+                        args=(tag,)
+                    )
+            
+            headlines = trend_data["komei"]["headlines"]
+            if headlines:
+                for h in headlines[:3]:
+                    st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
+                if len(headlines) > 3:
+                    with st.expander("もっと見る"):
+                        for h in headlines[3:]:
+                            st.markdown(f"- <small>{h}</small>", unsafe_allow_html=True)
+        
+        if st.button("トレンドを閉じる"):
+            st.session_state["show_trends"] = False
+            st.rerun()
 
 with tab_history:
     st.header("📜 保存済みプロジェクト")
