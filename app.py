@@ -1,6 +1,8 @@
 import streamlit as st
 import datetime
 import asyncio
+import os
+import subprocess
 from diet_minutes_api import DietMinutesAPI
 from news_fetcher import NewsFetcher
 from script_generator import ScriptGenerator
@@ -11,6 +13,21 @@ from project_manager import save_project, list_projects, delete_project
 
 # ページ設定
 st.set_page_config(page_title="パーソナライズ要約台本システム", layout="wide")
+
+# Playwrightのブラウザをクラウド環境でインストール
+@st.cache_resource
+def ensure_playwright_browsers():
+    if os.environ.get("STREAMLIT_SERVER_GATHER_USAGE_STATS") is not None:
+        try:
+            # st.info("クラウド環境を検知しました。Playwrightブラウザの初期設定を行っています...")
+            subprocess.run(["playwright", "install", "chromium"], check=True)
+            return True
+        except Exception as e:
+            st.error(f"Playwrightのインストールに失敗しました: {e}")
+            return False
+    return True
+
+ensure_playwright_browsers()
 
 # 設定の読み込み
 saved_settings = load_settings()
@@ -300,16 +317,37 @@ with tab_main:
             fetcher = NewsFetcher()
             scraper = KomeiScraper()
             generator = ScriptGenerator(provider=_provider, api_key=_api_key, model=_model)
-            # 並列実行
-            res_general, res_komei = await asyncio.gather(
-                asyncio.to_thread(fetcher.get_trending_headlines),
-                scraper.get_trending_headlines()
-            )
-            # キーワード抽出も並列で行う
-            gen_tags, kom_tags = await asyncio.gather(
-                asyncio.to_thread(generator.extract_keyword_tags, res_general),
-                asyncio.to_thread(generator.extract_keyword_tags, res_komei)
-            )
+            
+            # 1. 見出し取得 (個別エラーハンドリング)
+            res_general = []
+            res_komei = []
+            
+            try:
+                res_general = await asyncio.to_thread(fetcher.get_trending_headlines)
+            except Exception as e:
+                print(f"General news fetch error: {e}")
+            
+            try:
+                res_komei = await scraper.get_trending_headlines()
+            except Exception as e:
+                print(f"Komei news fetch error: {e}")
+            
+            # 2. キーワード抽出 (個別エラーハンドリング)
+            gen_tags = []
+            kom_tags = []
+            
+            if res_general:
+                try:
+                    gen_tags = await asyncio.to_thread(generator.extract_keyword_tags, res_general)
+                except Exception as e:
+                    print(f"General tags extraction error: {e}")
+            
+            if res_komei:
+                try:
+                    kom_tags = await asyncio.to_thread(generator.extract_keyword_tags, res_komei)
+                except Exception as e:
+                    print(f"Komei tags extraction error: {e}")
+
             return {
                 "general": {"tags": gen_tags, "headlines": res_general},
                 "komei": {"tags": kom_tags, "headlines": res_komei}
@@ -321,8 +359,13 @@ with tab_main:
             nest_asyncio.apply()
             return loop.run_until_complete(_fetch())
         except Exception as e:
-            print(f"Error in trend fetching: {e}")
-            return {"general": {"tags": [], "headlines": []}, "komei": {"tags": [], "headlines": []}}
+            # st.error はキャッシュ内では使えないため warning で返すか空にする
+            # 実際には呼び出し元で表示できるようにエラー情報を追加可能
+            return {
+                "general": {"tags": [], "headlines": []}, 
+                "komei": {"tags": [], "headlines": []},
+                "error": str(e)
+            }
 
     st.divider()
 
@@ -335,9 +378,20 @@ with tab_main:
             st.rerun()
     else:
         # APIキーがある場合のみタグを表示
-        if api_key:
             with st.spinner("トレンド情報を取得中..."):
+                # プロバイダーに応じたAPIキーのチェック
+                if not api_key:
+                    st.warning(f"{provider} の API キーが設定されていません。トレンドの抽出には AI 連携が必要です。")
+                    st.info("サイドバーでキーを入力するか、Streamlit Cloud の Secrets で設定してください。")
+                    st.session_state["show_trends"] = False
+                    return
+
                 trend_data = fetch_trending_info(provider, api_key, model)
+                
+                # エラーがあれば表示
+                if "error" in trend_data:
+                    st.error(f"トレンド取得中にエラーが発生しました: {trend_data['error']}")
+                    st.info("Playwright の起動に失敗している可能性があります（クラウド環境の制限など）。")
             
             # 1. 一般ニュースセクション
             with st.container(border=True):
