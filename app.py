@@ -17,10 +17,13 @@ st.set_page_config(page_title="パーソナライズ要約台本システム", l
 # Playwrightのブラウザをクラウド環境でインストール
 @st.cache_resource
 def ensure_playwright_browsers():
-    if os.environ.get("STREAMLIT_SERVER_GATHER_USAGE_STATS") is not None:
+    # Streamlit Cloudの検知 (環境変数またはパス)
+    is_cloud = os.environ.get("STREAMLIT_SERVER_GATHER_USAGE_STATS") is not None or os.path.exists("/home/appuser")
+    if is_cloud:
         try:
-            # st.info("クラウド環境を検知しました。Playwrightブラウザの初期設定を行っています...")
-            subprocess.run(["playwright", "install", "chromium"], check=True)
+            # ブラウザが既にあるかチェック (高速化のため)
+            if not os.path.exists("/home/appuser/.cache/ms-playwright"):
+                subprocess.run(["playwright", "install", "chromium"], check=True)
             return True
         except Exception as e:
             st.error(f"Playwrightのインストールに失敗しました: {e}")
@@ -311,7 +314,7 @@ with tab_main:
         else:
             st.session_state["main_topic_input"] = new_tag
 
-    @st.cache_data(ttl=3600)  # 1時間キャッシュ
+    @st.cache_data(ttl=60)  # デバッグのため1分に短縮
     def fetch_trending_info(_provider, _api_key, _model):
         async def _fetch():
             fetcher = NewsFetcher()
@@ -321,16 +324,18 @@ with tab_main:
             # 1. 見出し取得 (個別エラーハンドリング)
             res_general = []
             res_komei = []
+            err_general = None
+            err_komei = None
             
             try:
                 res_general = await asyncio.to_thread(fetcher.get_trending_headlines)
             except Exception as e:
-                print(f"General news fetch error: {e}")
+                err_general = str(e)
             
             try:
                 res_komei = await scraper.get_trending_headlines()
             except Exception as e:
-                print(f"Komei news fetch error: {e}")
+                err_komei = str(e)
             
             # 2. キーワード抽出 (個別エラーハンドリング)
             gen_tags = []
@@ -340,17 +345,17 @@ with tab_main:
                 try:
                     gen_tags = await asyncio.to_thread(generator.extract_keyword_tags, res_general)
                 except Exception as e:
-                    print(f"General tags extraction error: {e}")
+                    err_general = f"Tags Error: {e}" if not err_general else f"{err_general} | Tags Error: {e}"
             
             if res_komei:
                 try:
                     kom_tags = await asyncio.to_thread(generator.extract_keyword_tags, res_komei)
                 except Exception as e:
-                    print(f"Komei tags extraction error: {e}")
+                    err_komei = f"Tags Error: {e}" if not err_komei else f"{err_komei} | Tags Error: {e}"
 
             return {
-                "general": {"tags": gen_tags, "headlines": res_general},
-                "komei": {"tags": kom_tags, "headlines": res_komei}
+                "general": {"tags": gen_tags, "headlines": res_general, "error": err_general},
+                "komei": {"tags": kom_tags, "headlines": res_komei, "error": err_komei}
             }
         try:
             loop = asyncio.new_event_loop()
@@ -418,6 +423,11 @@ with tab_main:
             # 2. 公明新聞セクション
             with st.container(border=True):
                 st.markdown("🏢 **公明新聞の注目ワード**")
+                
+                # 個別エラーの表示
+                if trend_data["komei"].get("error"):
+                    st.warning(f"取得エラー: {trend_data['komei']['error']}")
+                
                 tags = trend_data["komei"]["tags"]
                 if tags:
                     tag_cols = st.columns(len(tags))
