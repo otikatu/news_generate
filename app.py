@@ -14,70 +14,111 @@ from project_manager import save_project, list_projects, delete_project
 # ページ設定
 st.set_page_config(page_title="国会NEWS台本", layout="wide")
 
-# カスタムCSSの注入 (オシャレなデザイン用)
+# カスタムCSSの注入 (プレミアムデザイン)
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Noto+Sans+JP:wght@400;700&display=swap');
     
-    /* フォント設定 */
-    html, body, [class*="css"]  {
-        font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    /* 基本フォント */
+    html, body, [class*="css"] {
+        font-family: 'Outfit', 'Noto Sans JP', sans-serif;
     }
 
-    /* タイトルグラデーション */
+    /* メイン背景の調整 (薄いグラデーション) */
+    .stApp {
+        background: radial-gradient(circle at 50% 0%, #f8faff 0%, #f0f4f8 100%);
+    }
+
+    /* ガラスモーフィズム・タイトルカード */
+    .glass-header {
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(10px);
+        border-radius: 24px;
+        padding: 2rem;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+        margin-bottom: 2rem;
+        text-align: center;
+    }
+
+    /* 高級感のあるタイトルグラデーション */
     .title-text {
-        font-size: 2.8rem;
+        font-size: 3.2rem;
         font-weight: 800;
-        background: linear-gradient(90deg, #64b5f6, #2196f3, #1976d2);
+        letter-spacing: -0.02em;
+        background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        line-height: 1.2;
-        padding-bottom: 10px;
+        margin-bottom: 0.5rem;
     }
 
-    /* モバイル用タイトル調整 */
-    @media (max-width: 640px) {
-        .title-text {
-            font-size: 1.8rem;
-        }
+    .subtitle-text {
+        color: #4b5563;
+        font-size: 1.1rem;
+        font-weight: 500;
     }
 
-    /* ボタンの角丸とホバーエフェクト */
+    /* ボタンのプレミアム化 */
     div.stButton > button {
-        border-radius: 12px;
+        border-radius: 14px;
+        padding: 0.6rem 2rem;
         font-weight: 600;
-        transition: all 0.2s ease;
+        border: none;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     
-    /* カード背景の調整 */
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 16px !important;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-        padding: 1.5rem !important;
-        background-color: #ffffff;
-    }
-    
-    /* タブのカスタマイズ */
-    button[data-baseweb="tab"] {
-        font-size: 1rem !important;
-        font-weight: 600 !important;
-    }
-    
-    /* ダークモード時などの調整 */
-    @media (prefers-color-scheme: dark) {
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            background-color: #1e1e1e;
-            border: 1px solid #333;
-        }
-        .title-text {
-            background: linear-gradient(90deg, #90caf9, #64b5f6, #42a5f5);
-            -webkit-background-clip: text;
-        }
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        background: #2563eb !important;
+        color: white !important;
     }
 
-    /* 入力フィールドの装飾 */
-    .stTextInput input {
-        border-radius: 10px !important;
+    /* 「生成」ボタンを特別に目立たせる */
+    div[data-testid="stFormSubmitButton"] > button, 
+    button:contains("生成する") {
+        background: linear-gradient(135deg, #ef4444 0%, #f97316 100%) !important;
+        color: white !important;
+        border: none !important;
+        transform: scale(1.02);
+    }
+
+    /* カード・コンテナの装飾 */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: white !important;
+        border-radius: 20px !important;
+        border: 1px solid #e5e7eb !important;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03) !important;
+        padding: 1.8rem !important;
+        transition: transform 0.3s ease;
+    }
+
+    /* サイドバーのカスタマイズ */
+    [data-testid="stSidebar"] {
+        background-color: #f8fafc;
+        border-right: 1px solid #e2e8f0;
+    }
+
+    /* モバイル最適化 */
+    @media (max-width: 640px) {
+        .title-text { font-size: 2.2rem; }
+        .subtitle-text { font-size: 1rem; }
+    }
+
+    /* ダークモード対応 */
+    @media (prefers-color-scheme: dark) {
+        .stApp { background: #0f172a; }
+        .glass-header { 
+            background: rgba(30, 41, 59, 0.7); 
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: #1e293b !important;
+            border: 1px solid #334155 !important;
+            color: #f1f5f9;
+        }
+        .subtitle-text { color: #94a3b8; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,11 +144,11 @@ ensure_playwright_browsers()
 # 設定の読み込み
 saved_settings = load_settings()
 
-st.markdown('<div class="title-text">🏛️ 国会NEWS台本</div>', unsafe_allow_html=True)
 st.markdown("""
-<p style="color: #666; font-size: 1.1rem; margin-top: -10px;">
-最新ニュースと国会議事録から、ハイクオリティな解説台本を。
-</p>
+<div class="glass-header">
+    <div class="title-text">🏛️ 国会NEWS台本</div>
+    <div class="subtitle-text">最新ニュースと国会議事録から、ハイクオリティな解説台本を。</div>
+</div>
 """, unsafe_allow_html=True)
 
 # サイドバー: 設定
