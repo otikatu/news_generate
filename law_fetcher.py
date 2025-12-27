@@ -1,7 +1,6 @@
 import requests
-import xml.etree.ElementTree as ET
 from typing import List, Dict, Optional
-import urllib.parse
+import json
 
 class LawFetcher:
     """
@@ -11,59 +10,102 @@ class LawFetcher:
 
     def search_laws(self, keyword: str) -> List[Dict]:
         """
-        キーワードで法令を検索し、メタ情報を取得する
+        法令名で法令を検索し、メタ情報を取得する (/laws エンドポイント)
         """
-        endpoint = f"{self.BASE_URL}/lawnames"
+        endpoint = f"{self.BASE_URL}/laws"
         params = {
-            "keyword": keyword
+            "law_title": keyword
+        }
+        headers = {
+            "Accept": "application/json"
         }
         try:
-            response = requests.get(endpoint, params=params)
+            response = requests.get(endpoint, params=params, headers=headers)
             response.raise_for_status()
             
-            # API v2 は XML を返す (JSON 試行版もあるが XML が安定)
-            root = ET.fromstring(response.content)
+            data = response.json()
             laws = []
             
-            # XML構造: <DataRoot><ApplData><LawNameListInfo>...
-            for info in root.findall(".//LawNameListInfo"):
-                law_title = info.find("LawName")
-                law_id = info.find("LawId")
-                law_num = info.find("LawNo")
-                promulgation_date = info.find("PromulgationDate") # 公布日
+            # v2 JSON structure for /laws: { "laws": [ { "law_info": {...}, "revision_info": {...} }, ... ] }
+            items = data.get("laws", [])
+            for item in items:
+                info = item.get("law_info", {})
+                rev = item.get("revision_info", {})
                 
-                if law_title is not None and law_id is not None:
-                    laws.append({
-                        "id": law_id.text,
-                        "title": law_title.text,
-                        "number": law_num.text if law_num is not None else "",
-                        "promulgation_date": promulgation_date.text if promulgation_date is not None else "不明"
-                    })
+                laws.append({
+                    "id": info.get("law_id"),
+                    "title": rev.get("law_title"),
+                    "number": info.get("law_num"),
+                    "promulgation_date": info.get("promulgation_date", "不明")
+                })
             return laws
         except Exception as e:
             print(f"Error searching laws: {e}")
             return []
 
+    def search_by_keyword(self, keyword: str) -> List[Dict]:
+        """
+        条文全文からキーワードを検索し、抜粋を取得する (/keyword エンドポイント)
+        """
+        endpoint = f"{self.BASE_URL}/keyword"
+        params = {
+            "keyword": keyword
+        }
+        headers = {
+            "Accept": "application/json"
+        }
+        try:
+            response = requests.get(endpoint, params=params, headers=headers)
+            response.raise_for_status()
+            
+            data = response.json()
+            results = []
+            
+            items = data.get("items", [])
+            for item in items:
+                info = item.get("law_info", {})
+                rev = item.get("revision_info", {})
+                sentences = item.get("sentences", [])
+                
+                # 抜粋テキストを結合 (<span>タグは削除)
+                snippets = []
+                for s in sentences:
+                    text = s.get("text", "").replace("<span>", "").replace("</span>", "")
+                    if text:
+                        snippets.append(text)
+                
+                results.append({
+                    "id": info.get("law_id"),
+                    "title": rev.get("law_title"),
+                    "number": info.get("law_num"),
+                    "snippets": snippets[:3] # 上位3件のスニペットを保持
+                })
+            return results
+        except Exception as e:
+            print(f"Error searching by keyword: {e}")
+            return []
+
     def fetch_law_text(self, law_id: str) -> Optional[str]:
         """
-        法令IDを指定して本文（抜粋）を取得する
+        法令IDを指定して本文（抜粋）を取得する (/lawdata/{law_id} エンドポイント)
         """
+        # Note: /lawdata/{law_id} は v2 でも XML (Media Type: application/xml) が基本のようです。
+        # JSON をサポートしているか不明なため、確実に動く XML 取得 + 簡易パースを継続します。
         endpoint = f"{self.BASE_URL}/lawdata/{law_id}"
         try:
             response = requests.get(endpoint)
             response.raise_for_status()
             
-            root = ET.fromstring(response.content)
-            # 法令本文は非常に長いため、冒頭部分や重要な章を抽出するのが現実的
-            # ここでは簡易的に冒頭のテキストを抽出
-            texts = []
-            for elem in root.iter():
-                if elem.text and elem.text.strip():
-                    texts.append(elem.text.strip())
+            # XMLを文字列として処理し、タグを除去してテキストのみを抽出する簡易実装
+            import re
+            text = response.text
+            # タグを除去
+            clean_text = re.sub(r'<[^>]+>', ' ', text)
+            # 連続する空白を1つに
+            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
             
-            full_text = "\n".join(texts)
             # 長すぎる場合は制限 (LLMのコンテキスト制限考慮)
-            return full_text[:3000] + "..." if len(full_text) > 3000 else full_text
+            return clean_text[:3000] + "..." if len(clean_text) > 3000 else clean_text
             
         except Exception as e:
             print(f"Error fetching law text: {e}")
@@ -72,6 +114,14 @@ class LawFetcher:
 if __name__ == "__main__":
     # テスト
     fetcher = LawFetcher()
+    print("--- Title Search (laws) ---")
     results = fetcher.search_laws("防衛")
-    for r in results[:3]:
+    for r in results[:2]:
         print(f"Title: {r['title']}, ID: {r['id']}")
+    
+    print("\n--- Full-text Search (keyword) ---")
+    kw_results = fetcher.search_by_keyword("防衛")
+    for r in kw_results[:2]:
+        print(f"Title: {r['title']}")
+        for s in r['snippets']:
+            print(f"  - {s}")

@@ -42,6 +42,13 @@ class SlideGenerator:
                 notes_slide = slide.notes_slide
                 text_frame = notes_slide.notes_text_frame
                 text_frame.text = slide_info["caption"]
+                
+            # 図解指示もノートに追加
+            if "visual_logic" in slide_info:
+                notes_slide = slide.notes_slide
+                text_frame = notes_slide.notes_text_frame
+                current_note = text_frame.text
+                text_frame.text = f"{current_note}\n\n[図解指示]\n{slide_info['visual_logic']}"
 
         output_path = "generated_presentation.pptx"
         self.prs.save(output_path)
@@ -51,8 +58,17 @@ if __name__ == "__main__":
     # Test
     gen = SlideGenerator()
     data = [
-        {"title": "スライド1のタイトル", "content": "・ポイント1\n・ポイント2", "caption": "これはスライド1の概要です。"},
-        {"title": "スライド2のタイトル", "content": "・ポイントA\n・ポイントB", "caption": "これはスライド2の概要です。"}
+        {
+            "title": "スライド1のタイトル", 
+            "content": "・ポイント1\n・ポイント2", 
+            "caption": "これはスライド1の概要です。",
+            "visual_logic": "diagram: 対比図\nillustration: 笑顔の高齢者"
+        },
+        {
+            "title": "スライド2のタイトル", 
+            "content": "・ポイントA\n・ポイントB", 
+            "caption": "これはスライド2の概要です。"
+        }
     ]
     gen.create_slides("テストプレゼン", data)
     print("Test PPTX generated.")

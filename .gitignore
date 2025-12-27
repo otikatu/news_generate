@@ -6,3 +6,8 @@ settings.json
 .env
 .streamlit/secrets.toml
 **/.streamlit/secrets.toml
+
+# Google Auth
+credentials.json
+token.pickle
+generated_presentation.pptx
