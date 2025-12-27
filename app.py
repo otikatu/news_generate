@@ -12,7 +12,75 @@ from settings_manager import load_settings, save_settings
 from project_manager import save_project, list_projects, delete_project
 
 # ページ設定
-st.set_page_config(page_title="パーソナライズ要約台本システム", layout="wide")
+st.set_page_config(page_title="国会NEWS台本", layout="wide")
+
+# カスタムCSSの注入 (オシャレなデザイン用)
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap');
+    
+    /* フォント設定 */
+    html, body, [class*="css"]  {
+        font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    }
+
+    /* タイトルグラデーション */
+    .title-text {
+        font-size: 2.8rem;
+        font-weight: 800;
+        background: linear-gradient(90deg, #64b5f6, #2196f3, #1976d2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        line-height: 1.2;
+        padding-bottom: 10px;
+    }
+
+    /* モバイル用タイトル調整 */
+    @media (max-width: 640px) {
+        .title-text {
+            font-size: 1.8rem;
+        }
+    }
+
+    /* ボタンの角丸とホバーエフェクト */
+    div.stButton > button {
+        border-radius: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    
+    /* カード背景の調整 */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 16px !important;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        padding: 1.5rem !important;
+        background-color: #ffffff;
+    }
+    
+    /* タブのカスタマイズ */
+    button[data-baseweb="tab"] {
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+    }
+    
+    /* ダークモード時などの調整 */
+    @media (prefers-color-scheme: dark) {
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background-color: #1e1e1e;
+            border: 1px solid #333;
+        }
+        .title-text {
+            background: linear-gradient(90deg, #90caf9, #64b5f6, #42a5f5);
+            -webkit-background-clip: text;
+        }
+    }
+
+    /* 入力フィールドの装飾 */
+    .stTextInput input {
+        border-radius: 10px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Playwrightのブラウザをクラウド環境でインストール
 @st.cache_resource
@@ -35,10 +103,12 @@ ensure_playwright_browsers()
 # 設定の読み込み
 saved_settings = load_settings()
 
-st.title("🏛️ 政治ニュース & 国会議事録 要約台本システム")
+st.markdown('<div class="title-text">🏛️ 国会NEWS台本</div>', unsafe_allow_html=True)
 st.markdown("""
-指定した政治ニュースと国会議事録を組み合わせ、出典明記の解説台本を自動作成します。
-""")
+<p style="color: #666; font-size: 1.1rem; margin-top: -10px;">
+最新ニュースと国会議事録から、ハイクオリティな解説台本を。
+</p>
+""", unsafe_allow_html=True)
 
 # サイドバー: 設定
 # サイドバー: 設定
@@ -314,7 +384,7 @@ with tab_main:
         else:
             st.session_state["main_topic_input"] = new_tag
 
-    @st.cache_data(ttl=60)  # デバッグのため1分に短縮
+    @st.cache_data(ttl=3600)  # 1時間キャッシュに戻す
     def fetch_trending_info(_provider, _api_key, _model):
         async def _fetch():
             fetcher = NewsFetcher()
