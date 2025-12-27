@@ -1,5 +1,8 @@
 import os
 import pickle
+import base64
+import json
+import streamlit as st
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -21,10 +24,19 @@ class GoogleSlideGenerator:
 
     def authenticate(self):
         """
-        Google APIの認証を行う
+        Google APIの認証を行う (ローカルファイル or Streamlit Cloud Secrets)
         """
-        # すでにトークンがあればロード
-        if os.path.exists(self.token_path):
+        # 1. Streamlit Secrets からのトークン読み込みを試行 (Cloud用)
+        if "google_token_pickle" in st.secrets:
+            try:
+                # Base64文字列をデコードしてpickleとして読み込む
+                token_bytes = base64.b64decode(st.secrets["google_token_pickle"])
+                self.creds = pickle.loads(token_bytes)
+            except Exception as e:
+                print(f"Secretsからのトークン読み込み失敗: {e}")
+
+        # 2. ローカルファイルからのトークン読み込み (Local用)
+        if not self.creds and os.path.exists(self.token_path):
             with open(self.token_path, 'rb') as token:
                 self.creds = pickle.load(token)
 
@@ -34,21 +46,35 @@ class GoogleSlideGenerator:
                 try:
                     self.creds.refresh(Request())
                 except Exception:
-                    # リフレッシュ失敗時は再認証
                     self.creds = None
             
             if not self.creds:
-                if not os.path.exists(self.credentials_path):
-                    raise FileNotFoundError(f"認証情報ファイルが見つかりません: {self.credentials_path}\nGCPコンソールからダウンロードしてください。")
+                # 新規認証フロー (Local Only)
+                # Cloud環境(Headless)でここに来るとブラウザが開けずに詰むため、
+                # Cloudでは必ず有効なRefresh Token入りPickleをSecretsに置く必要がある。
                 
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_path, SCOPES)
-                # ローカルサーバーを立ち上げて認証（ユーザー操作が必要）
+                # Client Secretsの取得
+                if os.path.exists(self.credentials_path):
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        self.credentials_path, SCOPES)
+                elif "google_credentials" in st.secrets:
+                    # Secrets (JSON) からロード
+                    # st.secrets returns AttrDict, need to convert to standard dict usually or ensure compatibility
+                    config = dict(st.secrets["google_credentials"])
+                    flow = InstalledAppFlow.from_client_config(config, SCOPES)
+                else:
+                    raise FileNotFoundError("認証情報(credentials.json または secrets.google_credentials)が見つかりません。")
+
+                # ローカルサーバー起動
                 self.creds = flow.run_local_server(port=0)
 
-            # トークンを保存
-            with open(self.token_path, 'wb') as token:
-                pickle.dump(self.creds, token)
+            # (Localのみ) トークンを保存
+            # Cloudで実行時はファイル書き込み権限がない場合があるためtry-except
+            try:
+                with open(self.token_path, 'wb') as token:
+                    pickle.dump(self.creds, token)
+            except:
+                pass
 
         self.service = build('slides', 'v1', credentials=self.creds)
         self.drive_service = build('drive', 'v3', credentials=self.creds)

@@ -548,8 +548,11 @@ with tab_main:
 
             # Google Slides Button
             if st.button("☁️ Googleスライドを作成 (Beta)"):
-                if not os.path.exists("credentials.json"):
-                    st.error("⚠️ 認証情報 (credentials.json) が見つかりません。実装計画書の手順に従って配置してください。")
+                has_creds_file = os.path.exists("credentials.json")
+                has_secrets = "google_credentials" in st.secrets and "google_token_pickle" in st.secrets
+                
+                if not has_creds_file and not has_secrets:
+                     st.error("⚠️ 認証情報が見つかりません。Localでは credentials.json、Cloudでは Secrets の設定が必要です。")
                 else:
                     try:
                         with st.spinner("Googleスライドを作成中... (初回はブラウザ認証が必要です)"):

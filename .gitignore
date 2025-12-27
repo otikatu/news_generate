@@ -11,3 +11,4 @@ settings.json
 credentials.json
 token.pickle
 generated_presentation.pptx
+generate_cloud_secrets.py
