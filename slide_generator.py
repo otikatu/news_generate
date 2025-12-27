@@ -75,8 +75,17 @@ class SlideGenerator:
             
             # コンテンツの流し込みと整形
             content_text = slide_info.get("content", "")
+            
+            # 先頭の・やスペースを削除（PPTXの箇条書き機能と重複しないように）
+            cleaned_lines = []
+            for line in content_text.split('\n'):
+                # 全角・、半角・、スペースなどを削除
+                cleaned_line = line.lstrip('・ ').lstrip()
+                if cleaned_line:
+                    cleaned_lines.append(cleaned_line)
+            
             # 既存のパラグラフをクリアするのではなく、テキストを設定してから整形
-            tf.text = content_text 
+            tf.text = "\n".join(cleaned_lines)
             
             for paragraph in tf.paragraphs:
                 paragraph.font.name = FONT_NAME
