@@ -8,7 +8,6 @@ from news_fetcher import NewsFetcher
 from script_generator import ScriptGenerator
 from komei_scraper import KomeiScraper
 from slide_generator import SlideGenerator
-from google_slide_generator import GoogleSlideGenerator
 from law_fetcher import LawFetcher
 from stats_fetcher import StatsFetcher
 from subsidy_fetcher import SubsidyFetcher
@@ -546,23 +545,7 @@ with tab_main:
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 )
 
-            # Google Slides Button
-            if st.button("☁️ Googleスライドを作成 (Beta)"):
-                has_creds_file = os.path.exists("credentials.json")
-                has_secrets = "google_credentials" in st.secrets and "google_token_pickle" in st.secrets
-                
-                if not has_creds_file and not has_secrets:
-                     st.error("⚠️ 認証情報が見つかりません。Localでは credentials.json、Cloudでは Secrets の設定が必要です。")
-                else:
-                    try:
-                        with st.spinner("Googleスライドを作成中... (初回はブラウザ認証が必要です)"):
-                            g_gen = GoogleSlideGenerator()
-                            presentation_title = f"{st.session_state['current_topic']}に関する解説"
-                            url = g_gen.create_slides(presentation_title, st.session_state["current_slides_data"])
-                            st.success("作成しました！")
-                            st.markdown(f"### [📂 Googleスライドを開く]({url})")
-                    except Exception as e:
-                        st.error(f"作成エラー: {e}")
+
             
             with st.expander("📊 スライド構成データ (JSON) を確認"):
                 st.json(st.session_state["current_slides_data"])
